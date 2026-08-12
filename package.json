@@ -1,0 +1,12 @@
+{
+  "name": "art-fight-server",
+  "version": "1.0.0",
+  "description": "Multiplayer server for Art Fight",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
