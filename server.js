@@ -8,13 +8,11 @@ const PORT = process.env.PORT || 3000;
 // ==========================================
 
 const server = http.createServer((req, res) => {
-
   res.writeHead(200, {
     "Content-Type": "text/plain"
   });
 
   res.end("🎨 Art Fight server is running!");
-
 });
 
 const wss = new WebSocket.Server({
@@ -42,17 +40,55 @@ function createRoomCode() {
 
   for (let i = 0; i < 5; i++) {
 
-    code +=
-      characters[
-        Math.floor(
-          Math.random() *
-          characters.length
-        )
-      ];
+    code += characters[
+      Math.floor(
+        Math.random() * characters.length
+      )
+    ];
 
   }
 
   return code;
+}
+
+
+// ==========================================
+// 📤 SEND MESSAGE
+// ==========================================
+
+function send(player, data) {
+
+  if (
+    player &&
+    player.readyState === WebSocket.OPEN
+  ) {
+
+    player.send(
+      JSON.stringify(data)
+    );
+
+  }
+
+}
+
+
+// ==========================================
+// 📤 SEND TO EVERYONE IN ROOM
+// ==========================================
+
+function broadcast(room, data) {
+
+  if (!room) {
+    return;
+  }
+
+  room.players.forEach(
+    (player) => {
+
+      send(player, data);
+
+    }
+  );
 
 }
 
@@ -67,8 +103,12 @@ wss.on("connection", (socket) => {
     "🎨 Player connected!"
   );
 
+
   socket.roomCode = null;
+
   socket.playerNumber = null;
+
+  socket.isHost = false;
 
 
   // ========================================
@@ -79,34 +119,40 @@ wss.on("connection", (socket) => {
 
     let data;
 
+
     try {
 
-      data =
-        JSON.parse(
-          message.toString()
-        );
-
-    } catch (error) {
-
-      socket.send(
-        JSON.stringify({
-
-          type: "error",
-
-          message:
-            "Invalid message."
-
-        })
+      data = JSON.parse(
+        message.toString()
       );
+
+    }
+
+    catch (error) {
+
+      send(socket, {
+
+        type: "error",
+
+        message:
+          "Invalid message."
+
+      });
 
       return;
 
     }
 
 
-    // ========================================
+    console.log(
+      "📩 Received:",
+      data
+    );
+
+
+    // ======================================
     // 🏠 CREATE ROOM
-    // ========================================
+    // ======================================
 
     if (
       data.type ===
@@ -115,68 +161,35 @@ wss.on("connection", (socket) => {
 
       let roomCode;
 
+
       do {
 
         roomCode =
           createRoomCode();
 
-      } while (
+      }
+
+      while (
         rooms[roomCode]
       );
 
-
-      // Create room
 
       rooms[roomCode] = {
 
         players: [],
 
-        // Default: 1 minute
+        roundTime: 60,
 
-        roundTime: 60
+        battleStarted: false
 
       };
 
 
-      // If the host selected a time,
-      // use that time instead.
-
-      if (
-        Number.isFinite(
-          Number(data.roundTime)
-        )
-      ) {
-
-        const requestedTime =
-          Number(data.roundTime);
+      const room =
+        rooms[roomCode];
 
 
-        // Only allow our four
-        // official time choices.
-
-        const allowedTimes = [
-          30,
-          50,
-          60,
-          120
-        ];
-
-
-        if (
-          allowedTimes.includes(
-            requestedTime
-          )
-        ) {
-
-          rooms[roomCode].roundTime =
-            requestedTime;
-
-        }
-
-      }
-
-
-      rooms[roomCode].players.push(
+      room.players.push(
         socket
       );
 
@@ -184,36 +197,34 @@ wss.on("connection", (socket) => {
       socket.roomCode =
         roomCode;
 
+
       socket.playerNumber =
         1;
 
 
-      // Tell host the room was created
+      socket.isHost =
+        true;
 
-      socket.send(
-        JSON.stringify({
 
-          type:
-            "roomCreated",
+      send(socket, {
 
-          roomCode:
-            roomCode,
+        type:
+          "roomCreated",
 
-          playerNumber:
-            1,
+        roomCode:
+          roomCode,
 
-          roundTime:
-            rooms[roomCode]
-              .roundTime
+        playerNumber:
+          1,
 
-        })
-      );
+        roundTime:
+          room.roundTime
+
+      });
 
 
       console.log(
-        `🏠 Room ${roomCode} created. ` +
-        `Round time: ` +
-        `${rooms[roomCode].roundTime}s`
+        `🏠 Room ${roomCode} created.`
       );
 
 
@@ -222,9 +233,9 @@ wss.on("connection", (socket) => {
     }
 
 
-    // ========================================
+    // ======================================
     // 🚪 JOIN ROOM
-    // ========================================
+    // ======================================
 
     if (
       data.type ===
@@ -235,59 +246,68 @@ wss.on("connection", (socket) => {
         String(
           data.roomCode || ""
         )
-          .trim()
-          .toUpperCase();
+        .trim()
+        .toUpperCase();
 
 
       const room =
         rooms[roomCode];
 
 
-      // Room doesn't exist
-
       if (!room) {
 
-        socket.send(
-          JSON.stringify({
+        send(socket, {
 
-            type:
-              "error",
+          type:
+            "error",
 
-            message:
-              "Battle not found."
+          message:
+            "Battle not found."
 
-          })
-        );
+        });
 
         return;
 
       }
 
-
-      // Room is full
 
       if (
         room.players.length >= 2
       ) {
 
-        socket.send(
-          JSON.stringify({
+        send(socket, {
 
-            type:
-              "error",
+          type:
+            "error",
 
-            message:
-              "This battle is already full."
+          message:
+            "This battle is already full."
 
-          })
-        );
+        });
 
         return;
 
       }
 
 
-      // Add player
+      if (
+        room.battleStarted
+      ) {
+
+        send(socket, {
+
+          type:
+            "error",
+
+          message:
+            "This battle has already started."
+
+        });
+
+        return;
+
+      }
+
 
       room.players.push(
         socket
@@ -297,59 +317,53 @@ wss.on("connection", (socket) => {
       socket.roomCode =
         roomCode;
 
+
       socket.playerNumber =
         2;
 
 
-      // Tell player 2 they joined
-
-      socket.send(
-        JSON.stringify({
-
-          type:
-            "roomJoined",
-
-          roomCode:
-            roomCode,
-
-          playerNumber:
-            2,
-
-          roundTime:
-            room.roundTime
-
-        })
-      );
+      socket.isHost =
+        false;
 
 
-      // Tell BOTH players
-      // that player 2 joined
+      // Tell Player 2 that they joined.
 
-      room.players.forEach(
-        (player) => {
+      send(socket, {
 
-          player.send(
-            JSON.stringify({
+        type:
+          "roomJoined",
 
-              type:
-                "playerJoined",
+        roomCode:
+          roomCode,
 
-              players:
-                room.players.length,
+        playerNumber:
+          2,
 
-              roundTime:
-                room.roundTime
+        roundTime:
+          room.roundTime
 
-            })
-          );
+      });
 
-        }
-      );
+
+      // Tell BOTH players that
+      // Player 2 has joined.
+
+      broadcast(room, {
+
+        type:
+          "playerJoined",
+
+        players:
+          room.players.length,
+
+        roundTime:
+          room.roundTime
+
+      });
 
 
       console.log(
-        `⚔️ Player 2 joined ` +
-        `room ${roomCode}.`
+        `🚪 Player 2 joined room ${roomCode}.`
       );
 
 
@@ -357,17 +371,260 @@ wss.on("connection", (socket) => {
 
     }
 
+
+    // ======================================
+    // ⏱️ HOST CHANGES ROUND TIME
+    // ======================================
+
+    if (
+      data.type ===
+      "setRoundTime"
+    ) {
+
+      const room =
+        rooms[
+          socket.roomCode
+        ];
+
+
+      if (!room) {
+
+        return;
+
+      }
+
+
+      // ONLY HOST CAN CHANGE IT.
+
+      if (!socket.isHost) {
+
+        send(socket, {
+
+          type:
+            "error",
+
+          message:
+            "Only the host can change the round time."
+
+        });
+
+        return;
+
+      }
+
+
+      if (
+        room.battleStarted
+      ) {
+
+        return;
+
+      }
+
+
+      const allowedTimes =
+        [
+          30,
+          50,
+          60,
+          120
+        ];
+
+
+      const newTime =
+        Number(
+          data.roundTime
+        );
+
+
+      if (
+        !allowedTimes.includes(
+          newTime
+        )
+      ) {
+
+        send(socket, {
+
+          type:
+            "error",
+
+          message:
+            "Invalid round time."
+
+        });
+
+        return;
+
+      }
+
+
+      room.roundTime =
+        newTime;
+
+
+      // Tell BOTH players
+      // what the host selected.
+
+      broadcast(room, {
+
+        type:
+          "roundTimeChanged",
+
+        roundTime:
+          room.roundTime
+
+      });
+
+
+      console.log(
+        `⏱️ Room ${socket.roomCode} time changed to ${newTime} seconds.`
+      );
+
+
+      return;
+
+    }
+
+
+    // ======================================
+    // ⚔️ HOST STARTS BATTLE
+    // ======================================
+
+    if (
+      data.type ===
+      "startBattle"
+    ) {
+
+      const room =
+        rooms[
+          socket.roomCode
+        ];
+
+
+      if (!room) {
+
+        send(socket, {
+
+          type:
+            "error",
+
+          message:
+            "Battle room not found."
+
+        });
+
+        return;
+
+      }
+
+
+      // ONLY HOST CAN START.
+
+      if (!socket.isHost) {
+
+        send(socket, {
+
+          type:
+            "error",
+
+          message:
+            "Only the host can start the battle."
+
+        });
+
+        return;
+
+      }
+
+
+      // Need both players.
+
+      if (
+        room.players.length < 2
+      ) {
+
+        send(socket, {
+
+          type:
+            "error",
+
+          message:
+            "Waiting for your opponent to join."
+
+        });
+
+        return;
+
+      }
+
+
+      if (
+        room.battleStarted
+      ) {
+
+        return;
+
+      }
+
+
+      room.battleStarted =
+        true;
+
+
+      console.log(
+        `⚔️ Battle ${socket.roomCode} started!`
+      );
+
+
+      // Tell BOTH players.
+
+      broadcast(room, {
+
+        type:
+          "battleStarted",
+
+        roundTime:
+          room.roundTime,
+
+        round:
+          1,
+
+        totalRounds:
+          3
+
+      });
+
+
+      return;
+
+    }
+
+
+    // ======================================
+    // ❓ UNKNOWN MESSAGE
+    // ======================================
+
+    send(socket, {
+
+      type:
+        "error",
+
+      message:
+        "Unknown message type."
+
+    });
+
   });
 
 
-  // ==========================================
+  // ========================================
   // ❌ PLAYER DISCONNECT
-  // ==========================================
+  // ========================================
 
   socket.on("close", () => {
 
     console.log(
-      "👋 Player disconnected."
+      "🔴 Player disconnected."
     );
 
 
@@ -400,25 +657,18 @@ wss.on("connection", (socket) => {
       );
 
 
-    // Tell remaining player
+    // If someone remains,
+    // tell them the opponent left.
 
-    room.players.forEach(
-      (player) => {
+    broadcast(room, {
 
-        player.send(
-          JSON.stringify({
+      type:
+        "playerLeft"
 
-            type:
-              "playerLeft"
-
-          })
-        );
-
-      }
-    );
+    });
 
 
-    // Delete empty room
+    // Delete empty room.
 
     if (
       room.players.length === 0
@@ -426,8 +676,17 @@ wss.on("connection", (socket) => {
 
       delete rooms[roomCode];
 
+
       console.log(
         `🗑️ Room ${roomCode} deleted.`
+      );
+
+    }
+
+    else {
+
+      console.log(
+        `👤 Room ${roomCode} still has a player.`
       );
 
     }
@@ -446,8 +705,7 @@ server.listen(
   () => {
 
     console.log(
-      `🎨 Art Fight server ` +
-      `running on port ${PORT}`
+      `🎨 Art Fight server running on port ${PORT}`
     );
 
   }
